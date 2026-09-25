@@ -52,7 +52,7 @@ if(RIPES_WITH_QPROCESS)
 endif()
 
 # Find required Qt packages
-find_package(Qt6 6.8 COMPONENTS Core Widgets Svg Charts REQUIRED)
+find_package(Qt6 6.8 COMPONENTS Core Widgets Svg Charts Network REQUIRED)
 
 # Finding Qt includes
 include_directories(${Qt6Widgets_INCLUDE_DIRS})
@@ -111,7 +111,7 @@ set(APP_NAME Ripes)
 qt_add_executable(${APP_NAME} ${SYSTEM_FLAGS} ${ICONS_SRC} ${EXAMPLES_SRC} ${LAYOUTS_SRC} ${FONTS_SRC} main.cpp)
 
 # Link Qt libraries
-target_link_libraries(${APP_NAME} PUBLIC Qt6::Core Qt6::Widgets)
+target_link_libraries(${APP_NAME} PUBLIC Qt6::Core Qt6::Widgets Qt6::Network)
 # Link Ripes library
 target_link_libraries(${APP_NAME} PUBLIC ${RIPES_LIB})
 

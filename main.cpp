@@ -3,8 +3,11 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QResource>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QUrl>
 #include <iostream>
-
 #include "src/cli/clioptions.h"
 #include "src/cli/clirunner.h"
 #include "src/mainwindow.h"
@@ -61,6 +64,22 @@ int guiMode(QApplication &app) {
   // application proper light/dark theming.
   QApplication::setStyle("Fusion");
   Ripes::applyColorScheme();
+
+  // test HTTP
+  QNetworkAccessManager *manager = new QNetworkAccessManager(&app);
+
+  QObject::connect(manager, &QNetworkAccessManager::finished, [](QNetworkReply *reply){
+    if (reply->error() == QNetworkReply::NoError){
+      qDebug().noquote() << reply->readAll();
+    }
+    else{
+      qDebug() << "HTTP error:" << reply->errorString();
+    }
+
+    reply->deleteLater();
+  });
+
+  manager->get(QNetworkRequest(QUrl("http://localhost:8080/api/file")));
 
   Ripes::MainWindow m;
 
