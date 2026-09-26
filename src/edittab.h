@@ -5,7 +5,7 @@
 #include <QWidget>
 #include <map>
 #include <memory>
-
+#include <QNetworkAccessManager>
 #include "assembler/assembler.h"
 #include "assembler/program.h"
 #include "ripestab.h"
@@ -44,6 +44,9 @@ public:
   /// calls loadFile(@p params). Returns true if the file loaded successfully.
   bool loadExternalFile(const LoadFileParams &params);
 
+  // load source file from HTTP server
+  void loadSourceFromServer(const QUrl &url);
+  
 signals:
   void programChanged(const std::shared_ptr<Program> &program);
   void editorStateChanged(bool enabled);
@@ -90,7 +93,9 @@ private:
 
   Ui::EditTab *m_ui = nullptr;
   std::shared_ptr<Errors> m_sourceErrors;
-
+  // manager to handle http requests 
+  QNetworkAccessManager m_networkManager;
+  
   SourceType m_currentSourceType = SourceType::Assembly;
 
   bool m_editorEnabled = true;

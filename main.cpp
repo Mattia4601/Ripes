@@ -66,22 +66,23 @@ int guiMode(QApplication &app) {
   Ripes::applyColorScheme();
 
   // test HTTP
-  QNetworkAccessManager *manager = new QNetworkAccessManager(&app);
+  // QNetworkAccessManager *manager = new QNetworkAccessManager(&app);
 
-  QObject::connect(manager, &QNetworkAccessManager::finished, [](QNetworkReply *reply){
-    if (reply->error() == QNetworkReply::NoError){
-      qDebug().noquote() << reply->readAll();
-    }
-    else{
-      qDebug() << "HTTP error:" << reply->errorString();
-    }
+  // QObject::connect(manager, &QNetworkAccessManager::finished, [](QNetworkReply *reply){
+  //   if (reply->error() == QNetworkReply::NoError){
+  //     qDebug().noquote() << reply->readAll();
+  //   }
+  //   else{
+  //     qDebug() << "HTTP error:" << reply->errorString();
+  //   }
 
-    reply->deleteLater();
-  });
+  //   reply->deleteLater();
+  // });
 
-  manager->get(QNetworkRequest(QUrl("http://localhost:8080/api/file")));
+  // manager->get(QNetworkRequest(QUrl("http://localhost:8080/api/file")));
 
   Ripes::MainWindow m;
+  m.loadSourceFromServer(QUrl("http://localhost:8080/api/file"));
 
 #ifdef Q_OS_WASM
   // In the WASM build, we'll just want a full-screen application that can't be

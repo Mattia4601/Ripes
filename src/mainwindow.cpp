@@ -384,6 +384,12 @@ void MainWindow::closeEvent(QCloseEvent *event) {
   QMainWindow::closeEvent(event);
 }
 
+// loadSourceFromServer just calls the homonymous function from edit tab
+void MainWindow::loadSourceFromServer(const QUrl &url){
+  static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
+        ->loadSourceFromServer(url);
+}
+
 void MainWindow::loadFileTriggered() {
   static_cast<ProcessorTab *>(m_tabWidgets.at(ProcessorTabID).tab)->pause();
   LoadDialog diag;

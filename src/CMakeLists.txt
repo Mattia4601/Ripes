@@ -85,5 +85,6 @@ target_link_libraries(${RIPES_LIB} PUBLIC
     elfio::elfio
     vsrtl::vsrtl
     Qt6::Charts
+    Qt6::Network
     dwarf++
 )

@@ -4,7 +4,7 @@
 
 #include "assembler/program.h"
 #include "statusmanager.h"
-
+#include <QUrl>
 QT_FORWARD_DECLARE_CLASS(QToolBar)
 QT_FORWARD_DECLARE_CLASS(QStackedWidget)
 QT_FORWARD_DECLARE_CLASS(QActionGroup)
@@ -55,6 +55,8 @@ public:
    */
   void restoreWindowGeometry();
 
+  // load source file from http server
+  void loadSourceFromServer(const QUrl &url);
 protected:
   void showEvent(QShowEvent *event) override;
 

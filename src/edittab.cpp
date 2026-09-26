@@ -5,8 +5,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QNetworkReply>
 #include <QPushButton>
-
+#include <QNetworkRequest>
 #include "assembler/program.h"
 
 #include "ccmanager.h"
@@ -225,6 +226,28 @@ bool EditTab::loadFile(const LoadFileParams &fileParams) {
   file.close();
   return success;
 }
+
+void EditTab::loadSourceFromServer(const QUrl &url) {
+  QNetworkRequest request(url);
+
+  auto *reply = m_networkManager.get(request);
+
+  connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    if (reply->error() != QNetworkReply::NoError) {
+            qDebug() << "HTTP GET error:" << reply->errorString();
+            reply->deleteLater();
+            return;
+        }
+
+        const QByteArray data = reply->readAll();
+        const QString source = QString::fromUtf8(data);
+
+        loadSourceText(source);
+
+        reply->deleteLater();
+  });
+}
+
 
 QString EditTab::getAssemblyText() { return m_ui->codeEditor->toPlainText(); }
 
