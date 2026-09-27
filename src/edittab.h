@@ -46,6 +46,8 @@ public:
 
   // load source file from HTTP server
   void loadSourceFromServer(const QUrl &url);
+  // save editor content into the filesystem
+  void saveSourceOnServer(const QUrl &url);
   
 signals:
   void programChanged(const std::shared_ptr<Program> &program);
@@ -95,7 +97,7 @@ private:
   std::shared_ptr<Errors> m_sourceErrors;
   // manager to handle http requests 
   QNetworkAccessManager m_networkManager;
-  
+
   SourceType m_currentSourceType = SourceType::Assembly;
 
   bool m_editorEnabled = true;

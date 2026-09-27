@@ -283,7 +283,7 @@ void MainWindow::setupMenus() {
           ->m_displayValuesAction);
 
   // File I/O is not yet supported on WASM due to sandboxing.
-  disableIfWasm(QList{loadAction, saveAction, saveAsAction, exitAction});
+  disableIfWasm(QList{loadAction, saveAsAction, exitAction});
 }
 
 MainWindow::~MainWindow() { delete m_ui; }
@@ -443,47 +443,58 @@ static bool ensurePath(const QString &path) {
 }
 
 void MainWindow::saveFilesTriggered() {
-  SaveDialog diag(
-      static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)->getSourceType());
-  if (!RipesSettings::value(RIPES_SETTING_HAS_SAVEFILE).toBool()) {
-    saveFilesAsTriggered();
+
+  #ifdef __EMSCRIPTEN__
+    auto *editTab =
+        static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab);
+
+    editTab->saveSourceOnServer(
+        QUrl("http://localhost:8080/api/file"));
+
     return;
-  }
-
-  emit prepareSave();
-  QStringList savedFiles;
-  if (!diag.sourcePath().isEmpty()) {
-    if (!ensurePath(diag.sourcePath()))
-      return;
-    QFile file(diag.sourcePath());
-    savedFiles << diag.sourcePath();
-    if (!writeTextFile(file,
-                       static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
-                           ->getAssemblyText())) {
-      QMessageBox::information(this, "File error",
-                               "Error when saving file: " + file.errorString());
+  #else
+    SaveDialog diag(
+        static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)->getSourceType());
+    if (!RipesSettings::value(RIPES_SETTING_HAS_SAVEFILE).toBool()) {
+      saveFilesAsTriggered();
       return;
     }
-  }
 
-  if (!diag.binaryPath().isEmpty()) {
-    if (!ensurePath(diag.binaryPath()))
-      return;
-    QFile file(diag.binaryPath());
-    auto program = ProcessorHandler::getProgram();
-    if (!program || (program.get()->sections.count(".text") == 0))
-      return;
-
-    savedFiles << diag.binaryPath();
-    if (!writeBinaryFile(file, program.get()->sections.at(".text").data)) {
-      QMessageBox::information(this, "File error",
-                               "Error when saving file: " + file.errorString());
-      return;
+    emit prepareSave();
+    QStringList savedFiles;
+    if (!diag.sourcePath().isEmpty()) {
+      if (!ensurePath(diag.sourcePath()))
+        return;
+      QFile file(diag.sourcePath());
+      savedFiles << diag.sourcePath();
+      if (!writeTextFile(file,
+                        static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
+                            ->getAssemblyText())) {
+        QMessageBox::information(this, "File error",
+                                "Error when saving file: " + file.errorString());
+        return;
+      }
     }
-  }
 
-  GeneralStatusManager::setStatusTimed("Saved files " + savedFiles.join(", "),
-                                       1000);
+    if (!diag.binaryPath().isEmpty()) {
+      if (!ensurePath(diag.binaryPath()))
+        return;
+      QFile file(diag.binaryPath());
+      auto program = ProcessorHandler::getProgram();
+      if (!program || (program.get()->sections.count(".text") == 0))
+        return;
+
+      savedFiles << diag.binaryPath();
+      if (!writeBinaryFile(file, program.get()->sections.at(".text").data)) {
+        QMessageBox::information(this, "File error",
+                                "Error when saving file: " + file.errorString());
+        return;
+      }
+    }
+
+    GeneralStatusManager::setStatusTimed("Saved files " + savedFiles.join(", "),
+                                        1000);
+  #endif
 }
 
 void MainWindow::saveFilesAsTriggered() {

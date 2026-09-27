@@ -227,6 +227,8 @@ bool EditTab::loadFile(const LoadFileParams &fileParams) {
   return success;
 }
 
+// this function take an url to do a get request that retrieve a file from the server
+// then it calls loadSourceText to save it in the Ripes editor
 void EditTab::loadSourceFromServer(const QUrl &url) {
   QNetworkRequest request(url);
 
@@ -248,6 +250,31 @@ void EditTab::loadSourceFromServer(const QUrl &url) {
   });
 }
 
+// this function calls a PUT api to save the content of the Ripes editor 
+// inside a file on the server filesystem
+void EditTab::saveSourceOnServer(const QUrl &url){
+  QNetworkRequest request(url);
+
+  // content type
+  request.setHeader(QNetworkRequest::ContentTypeHeader, "text/plain; charset=utf-8");
+
+  // recupero il contenuto dell'editor
+  const QByteArray body = getAssemblyText().toUtf8();
+
+  auto *reply = m_networkManager.put(request, body);
+  
+  // gestione della risposta
+  connect(reply, &QNetworkReply::finished, this, [reply]{
+    if (reply->error() != QNetworkReply::NoError){
+      qDebug() << "HTTP PUT error: " << reply->errorString();
+    }
+    else{
+      qDebug() << "File saved: " << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+    }
+
+    reply->deleteLater();
+  });
+}
 
 QString EditTab::getAssemblyText() { return m_ui->codeEditor->toPlainText(); }
 
