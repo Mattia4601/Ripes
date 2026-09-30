@@ -82,7 +82,9 @@ int guiMode(QApplication &app) {
   // manager->get(QNetworkRequest(QUrl("http://localhost:8080/api/file")));
 
   Ripes::MainWindow m;
+  #ifdef __EMSCRIPTEN__
   m.loadSourceFromServer(QUrl("http://localhost:8080/api/file"));
+  #endif
 
 #ifdef Q_OS_WASM
   // In the WASM build, we'll just want a full-screen application that can't be
