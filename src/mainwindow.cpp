@@ -449,7 +449,7 @@ void MainWindow::saveFilesTriggered() {
         static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab);
 
     editTab->saveSourceOnServer(
-        QUrl("http://localhost:8080/api/file"));
+        resolveApplicationUrl("api/file"));
 
     return;
   #else

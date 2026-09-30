@@ -13,6 +13,10 @@
 #include "src/mainwindow.h"
 #include "src/ripessettings.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 using namespace std;
 
 void initParser(QCommandLineParser &parser, Ripes::CLIModeOptions &options) {
@@ -58,6 +62,7 @@ CommandLineParseResult parseCommandLine(QCommandLineParser &parser,
   }
 }
 
+
 int guiMode(QApplication &app) {
   // Use the Fusion style, which respects the system light/dark palette and looks good with both. Combined
   // with QStyleHints::setColorScheme (see applyColorScheme) this gives the
@@ -83,7 +88,8 @@ int guiMode(QApplication &app) {
 
   Ripes::MainWindow m;
   #ifdef __EMSCRIPTEN__
-  m.loadSourceFromServer(QUrl("http://localhost:8080/api/file"));
+  
+  m.loadSourceFromServer(resolveApplicationUrl("api/file"));
   #endif
 
 #ifdef Q_OS_WASM
