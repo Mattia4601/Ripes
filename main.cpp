@@ -12,10 +12,7 @@
 #include "src/cli/clirunner.h"
 #include "src/mainwindow.h"
 #include "src/ripessettings.h"
-
-#ifdef __EMSCRIPTEN__
-#include <emscripten/emscripten.h>
-#endif
+#include "src/utilities/applicationurl.h"
 
 using namespace std;
 
@@ -89,7 +86,7 @@ int guiMode(QApplication &app) {
   Ripes::MainWindow m;
   #ifdef __EMSCRIPTEN__
   
-  m.loadSourceFromServer(resolveApplicationUrl("api/file"));
+  m.loadSourceFromServer(Ripes::resolveApplicationUrl("api/file"));
   #endif
 
 #ifdef Q_OS_WASM

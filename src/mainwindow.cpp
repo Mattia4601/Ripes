@@ -14,6 +14,7 @@
 #include "settingsdialog.h"
 #include "syscall/syscallviewer.h"
 #include "syscall/systemio.h"
+#include "utilities/applicationurl.h"
 #include "version/version.h"
 #include "wasmSupport.h"
 
