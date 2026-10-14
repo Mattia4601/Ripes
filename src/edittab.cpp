@@ -1,15 +1,18 @@
 #include "edittab.h"
 #include "ui_edittab.h"
-
-#include <QCheckBox>
-#include <QLabel>
-#include <QLineEdit>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QNetworkReply>
-#include <QPushButton>
 #include <QNetworkRequest>
+#include <QPushButton>
+#include <QUrl>
+#include <QVBoxLayout>
 #include "assembler/program.h"
-
+#include "utilities/applicationurl.h"
 #include "ccmanager.h"
 #include "cli/programutilities.h"
 #include "compilererrordialog.h"
@@ -252,7 +255,7 @@ void EditTab::loadSourceFromServer(const QUrl &url) {
 
 // this function calls a PUT api to save the content of the Ripes editor 
 // inside a file on the server filesystem
-void EditTab::saveSourceOnServer(const QUrl &url){
+void EditTab::saveSourceOnServer(const QUrl &url, bool setAsCurrent){
   QNetworkRequest request(url);
 
   // content type
@@ -264,16 +267,183 @@ void EditTab::saveSourceOnServer(const QUrl &url){
   auto *reply = m_networkManager.put(request, body);
   
   // gestione della risposta
-  connect(reply, &QNetworkReply::finished, this, [reply]{
+  connect(reply, &QNetworkReply::finished, this, [this, reply, url, setAsCurrent]{
+
     if (reply->error() != QNetworkReply::NoError){
       qDebug() << "HTTP PUT error: " << reply->errorString();
     }
     else{
+      if (setAsCurrent) {
+        m_currentRemoteSourceUrl = url;
+      }
       qDebug() << "File saved: " << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
     }
 
     reply->deleteLater();
   });
+}
+
+// load a source file selected from the remote file list 
+void EditTab::loadRemoteSourceList(const QUrl &url) {
+    // Retrieve the available source files.
+    QNetworkRequest request(url);
+    auto *reply = m_networkManager.get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url] {
+        if (reply->error() != QNetworkReply::NoError) {
+            QMessageBox::warning(
+                this, "Error",
+                "Unable to retrieve the remote source file list.");
+            reply->deleteLater();
+            return;
+        }
+
+        const QJsonDocument document =
+            QJsonDocument::fromJson(reply->readAll());
+        reply->deleteLater();
+
+        if (!document.isArray()) {
+            QMessageBox::warning(
+                this, "Error",
+                "The server returned an invalid file list.");
+            return;
+        }
+
+        // Keep only .s and .c files.
+        QStringList files;
+        for (const QJsonValue &value : document.array()) {
+            if (!value.isString()) {
+                continue;
+            }
+
+            const QString filename = value.toString();
+
+            if (filename.endsWith(".s", Qt::CaseInsensitive) ||
+                filename.endsWith(".c", Qt::CaseInsensitive)) {
+                files.append(filename);
+            }
+        }
+
+        files.removeDuplicates();
+        files.sort(Qt::CaseInsensitive);
+
+        if (files.isEmpty()) {
+            QMessageBox::information(
+                this, "Load Program",
+                "No .s or .c source files are available.");
+            return;
+        }
+
+        // Create a dialog containing a list instead of a combo box.
+        auto *dialog = new QDialog(this);
+        dialog->setWindowTitle("Load Program");
+
+        auto *layout = new QVBoxLayout(dialog);
+        auto *list = new QListWidget(dialog);
+        list->addItems(files);
+        list->setCurrentRow(0);
+
+        auto *buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+            dialog);
+
+        layout->addWidget(list);
+        layout->addWidget(buttons);
+
+        connect(buttons, &QDialogButtonBox::accepted,
+                dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected,
+                dialog, &QDialog::reject);
+
+        // Double-clicking a file also confirms the selection.
+        connect(list, &QListWidget::itemDoubleClicked,
+                dialog, [dialog](QListWidgetItem *) {
+            dialog->accept();
+        });
+
+        connect(dialog, &QDialog::accepted, this,
+                [this, dialog, list, url] {
+            const QListWidgetItem *item = list->currentItem();
+            const QString filename =
+                item ? item->text() : QString();
+
+            dialog->deleteLater();
+
+            if (filename.isEmpty()) {
+                return;
+            }
+
+            
+            const bool isCFile = filename.endsWith(".c", Qt::CaseInsensitive);
+
+            // C files are loaded as text for now.
+            // Do not activate the C input mode in WebAssembly.
+            if (!isCFile) {
+                m_ui->setAssemblyInput->setChecked(true);
+
+                if (m_currentSourceType != SourceType::Assembly) {
+                    dialog->deleteLater();
+                    return;
+                }
+            }
+
+            // Request the selected file.
+            QUrl fileUrl = url;
+            fileUrl.setPath(fileUrl.path() + "/" + filename);
+
+            QNetworkRequest fileRequest(fileUrl);
+            auto *fileReply = m_networkManager.get(fileRequest);
+
+            connect(fileReply, &QNetworkReply::finished, this,
+                    [this, fileReply, fileUrl] {
+                if (fileReply->error() != QNetworkReply::NoError) {
+                    qDebug() << "HTTP GET error:"
+                            << fileReply->errorString();
+                    fileReply->deleteLater();
+                    return;
+                }
+
+                const QString source =
+                    QString::fromUtf8(fileReply->readAll());
+
+                loadSourceText(source);
+                m_currentRemoteSourceUrl = fileUrl;
+
+                fileReply->deleteLater();
+            });
+        });
+
+        connect(dialog, &QDialog::rejected,
+                dialog, &QObject::deleteLater);
+
+        // Open asynchronously; do not use exec().
+        dialog->open();
+    });
+}
+
+// save the changes to the remote file
+void EditTab::saveCurrentRemoteSource() {
+
+    qDebug() << "Saving remote source:"
+         << m_currentRemoteSourceUrl;
+
+    if (m_currentRemoteSourceUrl.isEmpty()) {
+        QMessageBox::information(
+            this, 
+            "Save",
+            "No remote source file is currently open.");
+        return;
+    }
+
+    saveSourceOnServer(m_currentRemoteSourceUrl);
+}
+
+// save new file into the remote filesystem
+void EditTab::saveRemoteSourceAs(const QString &filename) {
+    QUrl fileUrl = Ripes::resolveApplicationUrl(
+        QString("api/files/%1").arg(filename));
+
+    saveSourceOnServer(fileUrl, true);
 }
 
 QString EditTab::getAssemblyText() { return m_ui->codeEditor->toPlainText(); }

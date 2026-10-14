@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QFile>
 #include <QWidget>
+#include <QUrl>
 #include <map>
 #include <memory>
 #include <QNetworkAccessManager>
@@ -47,8 +48,14 @@ public:
   // load source file from HTTP server
   void loadSourceFromServer(const QUrl &url);
   // save editor content into the filesystem
-  void saveSourceOnServer(const QUrl &url);
+  void saveSourceOnServer(const QUrl &url, bool setAsCurrent = false);
   
+  // load a source file selected from the remote file list 
+  void loadRemoteSourceList(const QUrl &url);
+  // save changes to the current open remote file
+  void saveCurrentRemoteSource();
+  // save new file into the remote filesystem
+  void saveRemoteSourceAs(const QString &filename);
 signals:
   void programChanged(const std::shared_ptr<Program> &program);
   void editorStateChanged(bool enabled);
@@ -97,6 +104,8 @@ private:
   std::shared_ptr<Errors> m_sourceErrors;
   // manager to handle http requests 
   QNetworkAccessManager m_networkManager;
+  // url of the opened remote file
+  QUrl m_currentRemoteSourceUrl;
 
   SourceType m_currentSourceType = SourceType::Assembly;
 

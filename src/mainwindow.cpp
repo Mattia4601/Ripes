@@ -19,7 +19,7 @@
 #include "wasmSupport.h"
 
 #include "fancytabbar/fancytabbar.h"
-
+#include <QInputDialog>
 #include <QCloseEvent>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -284,7 +284,7 @@ void MainWindow::setupMenus() {
           ->m_displayValuesAction);
 
   // File I/O is not yet supported on WASM due to sandboxing.
-  disableIfWasm(QList{loadAction, saveAsAction, exitAction});
+  disableIfWasm(QList{saveAsAction, exitAction});
 }
 
 MainWindow::~MainWindow() { delete m_ui; }
@@ -393,19 +393,28 @@ void MainWindow::loadSourceFromServer(const QUrl &url){
 
 void MainWindow::loadFileTriggered() {
   static_cast<ProcessorTab *>(m_tabWidgets.at(ProcessorTabID).tab)->pause();
-  LoadDialog diag;
-  if (!diag.exec())
+  
+  #ifdef __EMSCRIPTEN__
+    static_cast<EditTab *>(
+        m_tabWidgets.at(EditTabID).tab)
+        ->loadRemoteSourceList(
+            Ripes::resolveApplicationUrl("api/files"));
     return;
+  #else
+    LoadDialog diag;
+    if (!diag.exec())
+      return;
 
-  if (static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
-          ->loadExternalFile(diag.getParams())) {
-    // Set the current save path to the loaded file. Only store the file
-    // basename without extension.
-    QFileInfo info = QFileInfo(diag.getParams().filepath);
-    auto savePath = info.dir().path() + QDir::separator() + info.baseName();
-    RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
-    RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
-  }
+    if (static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
+            ->loadExternalFile(diag.getParams())) {
+      // Set the current save path to the loaded file. Only store the file
+      // basename without extension.
+      QFileInfo info = QFileInfo(diag.getParams().filepath);
+      auto savePath = info.dir().path() + QDir::separator() + info.baseName();
+      RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
+      RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
+    }
+  #endif  
 }
 
 void MainWindow::wiki() {
@@ -449,8 +458,7 @@ void MainWindow::saveFilesTriggered() {
     auto *editTab =
         static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab);
 
-    editTab->saveSourceOnServer(
-        resolveApplicationUrl("api/file"));
+    editTab->saveCurrentRemoteSource();
 
     return;
   #else
@@ -499,14 +507,48 @@ void MainWindow::saveFilesTriggered() {
 }
 
 void MainWindow::saveFilesAsTriggered() {
+#ifdef __EMSCRIPTEN__
+  auto *editTab =
+      static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab);
+
+  const QString extension =
+      editTab->getSourceType() == SourceType::Assembly ? ".s" : ".c";
+
+  bool ok = false;
+  QString filename = QInputDialog::getText(
+      this,
+      "Save As",
+      "Enter the file name:",
+      QLineEdit::Normal,
+      QString(),
+      &ok);
+
+  if (!ok || filename.trimmed().isEmpty()) {
+    return;
+  }
+
+  filename = filename.trimmed();
+
+  // Add the extension if the user did not specify one.
+  if (!filename.endsWith(".s", Qt::CaseInsensitive) &&
+      !filename.endsWith(".c", Qt::CaseInsensitive)) {
+    filename += extension;
+  }
+
+  editTab->saveRemoteSourceAs(filename);
+  return;
+#else
   SaveDialog diag(
       static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)->getSourceType());
+
   auto ret = diag.exec();
   if (ret == QDialog::Rejected) {
     return;
   }
+
   RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
   saveFilesTriggered();
+#endif
 }
 
 void MainWindow::settingsTriggered() {
