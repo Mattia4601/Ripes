@@ -4,6 +4,13 @@
 #include <QCheckBox>
 #include <QFileDialog>
 
+#ifdef Q_OS_WASM
+#include "remotefs/remotefiledialog.h"
+#include "remotefs/remotefileengine.h"
+
+#include <QRegularExpression>
+#endif
+
 namespace Ripes {
 
 SaveDialog::SaveDialog(SourceType sourceType, QWidget *parent)
@@ -25,11 +32,24 @@ SaveDialog::SaveDialog(SourceType sourceType, QWidget *parent)
       RipesSettings::value(RIPES_SETTING_SAVE_SOURCE).toBool());
   m_ui->saveBinary->setChecked(
       RipesSettings::value(RIPES_SETTING_SAVE_BINARY).toBool());
+#ifdef Q_OS_WASM
+  // The remote file system only stores source files.
+  m_ui->saveBinary->setChecked(false);
+  m_ui->saveBinary->setEnabled(false);
+#endif
 
   QString path = RipesSettings::value(RIPES_SETTING_SAVEPATH).toString();
+#ifdef Q_OS_WASM
+  // Only remote paths are persistent; anything else would be lost on reload.
+  if (!path.startsWith(RemoteFileSystemPrefix) ||
+      !QFileInfo(path).dir().exists()) {
+    path = RemoteFileSystemPrefix + u'/';
+  }
+#else
   if (!QFileInfo(path).dir().exists()) {
     path = QDir::currentPath();
   }
+#endif
   if (QFileInfo(path).isDir()) {
     path += QDir::separator();
   }
@@ -68,11 +88,31 @@ void SaveDialog::pathChanged() {
 }
 
 void SaveDialog::openFileButtonTriggered() {
+#ifdef Q_OS_WASM
+  // Browse the remote file system. This dialog is already modal (exec()), and
+  // nested exec() calls are not supported on WASM, so the file dialog is
+  // opened asynchronously.
+  auto *dialog = new RemoteFileDialog(
+      RemoteFileDialog::Mode::Save, tr("Save source file"),
+      QStringLiteral("Source files (*.s *.as *.asm *.c)"), this);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &RemoteFileDialog::fileSelected, this,
+          [this](QString filename) {
+            // The save path excludes the extension, which is appended based
+            // on the source type (see sourcePath()).
+            filename.remove(QRegularExpression(
+                QStringLiteral("\\.(s|as|asm|c)$"),
+                QRegularExpression::CaseInsensitiveOption));
+            m_ui->filePath->setText(filename);
+          });
+  dialog->open();
+#else
   QFileDialog dialog(this);
   dialog.setAcceptMode(QFileDialog::AcceptSave);
   if (dialog.exec()) {
     m_ui->filePath->setText(dialog.selectedFiles().at(0));
   }
+#endif
 }
 
 SaveDialog::~SaveDialog() { delete m_ui; }

@@ -78,6 +78,9 @@ add_subdirectory(utilities)
 add_subdirectory(processors)
 add_subdirectory(version)
 add_subdirectory(cli)
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Emscripten")
+    add_subdirectory(remotefs)
+endif()
 
 # Also link Qt and VSRTL libraries.
 target_link_libraries(${RIPES_LIB} PUBLIC

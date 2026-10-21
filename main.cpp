@@ -10,6 +10,10 @@
 #include "src/mainwindow.h"
 #include "src/ripessettings.h"
 
+#ifdef Q_OS_WASM
+#include "src/remotefs/remotefileengine.h"
+#endif
+
 using namespace std;
 
 void initParser(QCommandLineParser &parser, Ripes::CLIModeOptions &options) {
@@ -61,6 +65,11 @@ int guiMode(QApplication &app) {
   // application proper light/dark theming.
   QApplication::setStyle("Fusion");
   Ripes::applyColorScheme();
+
+#ifdef Q_OS_WASM
+  // Serve "remote:/" paths from the server hosting Ripes.
+  Ripes::installRemoteFileSystem();
+#endif
 
   Ripes::MainWindow m;
 

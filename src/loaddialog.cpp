@@ -15,6 +15,10 @@
 #include <QPushButton>
 #include <QRegularExpressionValidator>
 
+#ifdef Q_OS_WASM
+#include "remotefs/remotefiledialog.h"
+#endif
+
 namespace Ripes {
 
 LoadDialog::TypeButtonID LoadDialog::s_typeIndex = TypeButtonID::ELF;
@@ -64,6 +68,13 @@ LoadDialog::LoadDialog(QWidget *parent)
 
   // ELF page
   m_ui->currentISA->setText(ProcessorHandler::currentISA()->name());
+
+#ifdef Q_OS_WASM
+  // The remote file system only stores source files.
+  m_ui->elfRadioButton->setEnabled(false);
+  m_ui->binaryRadioButton->setEnabled(false);
+  s_typeIndex = TypeButtonID::Source;
+#endif
 
   // default selection
   m_fileTypeButtons->button(s_typeIndex)->toggle();
@@ -115,10 +126,25 @@ void LoadDialog::openFileButtonTriggered() {
   }
   }
 
+#ifdef Q_OS_WASM
+  // Browse the remote file system. This dialog is already modal (exec()), and
+  // nested exec() calls are not supported on WASM, so the file dialog is
+  // opened asynchronously.
+  auto *dialog = new RemoteFileDialog(RemoteFileDialog::Mode::Open, title,
+                                      filter, this);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &RemoteFileDialog::fileSelected, this,
+          [this](const QString &filename) {
+            if (!filename.isEmpty())
+              m_ui->filePath->setText(filename);
+          });
+  dialog->open();
+#else
   const auto filename = QFileDialog::getOpenFileName(this, title, "", filter);
   if (!filename.isEmpty()) {
     m_ui->filePath->setText(filename);
   }
+#endif
 }
 
 void LoadDialog::paletteValidate(QWidget *w, bool valid) {

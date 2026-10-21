@@ -53,6 +53,10 @@ endif()
 
 # Find required Qt packages
 find_package(Qt6 6.8 COMPONENTS Core Widgets Svg Charts REQUIRED)
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Emscripten")
+    # Remote file system (src/remotefs), built on Qt's private file engine API.
+    find_package(Qt6 COMPONENTS CorePrivate REQUIRED)
+endif()
 
 # Finding Qt includes
 include_directories(${Qt6Widgets_INCLUDE_DIRS})

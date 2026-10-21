@@ -282,8 +282,9 @@ void MainWindow::setupMenus() {
       static_cast<ProcessorTab *>(m_tabWidgets.at(ProcessorTabID).tab)
           ->m_displayValuesAction);
 
-  // File I/O is not yet supported on WASM due to sandboxing.
-  disableIfWasm(QList{loadAction, saveAction, saveAsAction, exitAction});
+  // On WASM, file I/O goes through the remote file system (see
+  // remotefs/remotefileengine.h); exiting the application is not supported.
+  disableIfWasm(QList{exitAction});
 }
 
 MainWindow::~MainWindow() { delete m_ui; }
@@ -386,6 +387,24 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::loadFileTriggered() {
   static_cast<ProcessorTab *>(m_tabWidgets.at(ProcessorTabID).tab)->pause();
+#ifdef Q_OS_WASM
+  // On WASM, a dialog opened on top of a dialog running exec() blocks the
+  // application, so the load dialog is shown asynchronously.
+  auto *diag = new LoadDialog(this);
+  diag->setAttribute(Qt::WA_DeleteOnClose);
+  connect(diag, &QDialog::accepted, this, [this, diag] {
+    if (static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
+            ->loadExternalFile(diag->getParams())) {
+      // Set the current save path to the loaded file. Only store the file
+      // basename without extension.
+      QFileInfo info = QFileInfo(diag->getParams().filepath);
+      auto savePath = info.dir().path() + QDir::separator() + info.baseName();
+      RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
+      RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
+    }
+  });
+  diag->open();
+#else
   LoadDialog diag;
   if (!diag.exec())
     return;
@@ -399,6 +418,7 @@ void MainWindow::loadFileTriggered() {
     RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
     RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
   }
+#endif
 }
 
 void MainWindow::wiki() {
@@ -416,8 +436,10 @@ static bool writeTextFile(QFile &file, const QString &data) {
   if (file.open(QIODevice::WriteOnly)) {
     QTextStream stream(&file);
     stream << data;
+    // Errors may only surface when the file is closed (e.g. when the data is
+    // written out by a remote file engine).
     file.close();
-    return true;
+    return file.error() == QFileDevice::NoError;
   }
   return false;
 }
@@ -426,7 +448,7 @@ static bool writeBinaryFile(QFile &file, const QByteArray &data) {
   if (file.open(QIODevice::WriteOnly)) {
     file.write(data);
     file.close();
-    return true;
+    return file.error() == QFileDevice::NoError;
   }
   return false;
 }
@@ -481,6 +503,19 @@ void MainWindow::saveFilesTriggered() {
 }
 
 void MainWindow::saveFilesAsTriggered() {
+#ifdef Q_OS_WASM
+  // On WASM, a dialog opened on top of a dialog running exec() blocks the
+  // application, so the save dialog is shown asynchronously.
+  auto *diag = new SaveDialog(
+      static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)->getSourceType(),
+      this);
+  diag->setAttribute(Qt::WA_DeleteOnClose);
+  connect(diag, &QDialog::accepted, this, [this] {
+    RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
+    saveFilesTriggered();
+  });
+  diag->open();
+#else
   SaveDialog diag(
       static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)->getSourceType());
   auto ret = diag.exec();
@@ -489,6 +524,7 @@ void MainWindow::saveFilesAsTriggered() {
   }
   RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
   saveFilesTriggered();
+#endif
 }
 
 void MainWindow::settingsTriggered() {
