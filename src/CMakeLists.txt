@@ -78,7 +78,7 @@ add_subdirectory(utilities)
 add_subdirectory(processors)
 add_subdirectory(version)
 add_subdirectory(cli)
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Emscripten")
+if(RIPES_WITH_REMOTE_FS)
     add_subdirectory(remotefs)
 endif()
 

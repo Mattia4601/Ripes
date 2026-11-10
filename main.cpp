@@ -10,7 +10,7 @@
 #include "src/mainwindow.h"
 #include "src/ripessettings.h"
 
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
 #include "src/remotefs/remotefileengine.h"
 #endif
 
@@ -66,7 +66,7 @@ int guiMode(QApplication &app) {
   QApplication::setStyle("Fusion");
   Ripes::applyColorScheme();
 
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // Serve "remote:/" paths from the server hosting Ripes.
   Ripes::installRemoteFileSystem();
 #endif

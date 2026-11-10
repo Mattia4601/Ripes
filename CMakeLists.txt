@@ -51,10 +51,22 @@ if(RIPES_WITH_QPROCESS)
     add_definitions(-DRIPES_WITH_QPROCESS)
 endif()
 
+# Remote file system (src/remotefs): in the WebAssembly build, files are loaded
+# from and saved to a server hosting Ripes. Requires a backend serving the
+# file API, see docker/remote-fs.
+set(RIPES_WITH_REMOTE_FS OFF CACHE BOOL "Build with the remote file system (WebAssembly only)")
+if(RIPES_WITH_REMOTE_FS)
+    if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Emscripten")
+        message(FATAL_ERROR "RIPES_WITH_REMOTE_FS is only supported in WebAssembly builds")
+    endif()
+    # Add as a C++ definition
+    add_definitions(-DRIPES_WITH_REMOTE_FS)
+endif()
+
 # Find required Qt packages
 find_package(Qt6 6.8 COMPONENTS Core Widgets Svg Charts REQUIRED)
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Emscripten")
-    # Remote file system (src/remotefs), built on Qt's private file engine API.
+if(RIPES_WITH_REMOTE_FS)
+    # The remote file system is built on Qt's private file engine API.
     find_package(Qt6 COMPONENTS CorePrivate REQUIRED)
 endif()
 

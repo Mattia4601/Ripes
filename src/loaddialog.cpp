@@ -15,7 +15,7 @@
 #include <QPushButton>
 #include <QRegularExpressionValidator>
 
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
 #include "remotefs/remotefiledialog.h"
 #endif
 
@@ -69,7 +69,7 @@ LoadDialog::LoadDialog(QWidget *parent)
   // ELF page
   m_ui->currentISA->setText(ProcessorHandler::currentISA()->name());
 
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // The remote file system only stores source files.
   m_ui->elfRadioButton->setEnabled(false);
   m_ui->binaryRadioButton->setEnabled(false);
@@ -126,7 +126,7 @@ void LoadDialog::openFileButtonTriggered() {
   }
   }
 
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // Browse the remote file system. Nested exec() calls are not supported on
   // WASM, so the file dialog is opened asynchronously.
   auto *dialog = new RemoteFileDialog(RemoteFileDialog::Mode::Open, title,

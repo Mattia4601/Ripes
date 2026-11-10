@@ -4,7 +4,7 @@
 #include <QCheckBox>
 #include <QFileDialog>
 
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
 #include "remotefs/remotefiledialog.h"
 #include "remotefs/remotefileengine.h"
 
@@ -32,14 +32,14 @@ SaveDialog::SaveDialog(SourceType sourceType, QWidget *parent)
       RipesSettings::value(RIPES_SETTING_SAVE_SOURCE).toBool());
   m_ui->saveBinary->setChecked(
       RipesSettings::value(RIPES_SETTING_SAVE_BINARY).toBool());
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // The remote file system only stores source files.
   m_ui->saveBinary->setChecked(false);
   m_ui->saveBinary->setEnabled(false);
 #endif
 
   QString path = RipesSettings::value(RIPES_SETTING_SAVEPATH).toString();
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // Only remote paths are persistent; anything else would be lost on reload.
   if (!path.startsWith(RemoteFileSystemPrefix) ||
       !QFileInfo(path).dir().exists()) {
@@ -88,7 +88,7 @@ void SaveDialog::pathChanged() {
 }
 
 void SaveDialog::openFileButtonTriggered() {
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // Browse the remote file system. This dialog is already modal (exec()), and
   // nested exec() calls are not supported on WASM, so the file dialog is
   // opened asynchronously.

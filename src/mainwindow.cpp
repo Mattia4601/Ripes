@@ -282,9 +282,14 @@ void MainWindow::setupMenus() {
       static_cast<ProcessorTab *>(m_tabWidgets.at(ProcessorTabID).tab)
           ->m_displayValuesAction);
 
+#ifdef RIPES_WITH_REMOTE_FS
   // On WASM, file I/O goes through the remote file system (see
   // remotefs/remotefileengine.h); exiting the application is not supported.
   disableIfWasm(QList{exitAction});
+#else
+  // File I/O is not yet supported on WASM due to sandboxing.
+  disableIfWasm(QList{loadAction, saveAction, saveAsAction, exitAction});
+#endif
 }
 
 MainWindow::~MainWindow() { delete m_ui; }
@@ -387,7 +392,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::loadFileTriggered() {
   static_cast<ProcessorTab *>(m_tabWidgets.at(ProcessorTabID).tab)->pause();
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // On WASM, a dialog opened on top of a dialog running exec() blocks the
   // application, so the load dialog is shown asynchronously.
   auto *diag = new LoadDialog(this);
@@ -503,7 +508,7 @@ void MainWindow::saveFilesTriggered() {
 }
 
 void MainWindow::saveFilesAsTriggered() {
-#ifdef Q_OS_WASM
+#ifdef RIPES_WITH_REMOTE_FS
   // On WASM, a dialog opened on top of a dialog running exec() blocks the
   // application, so the save dialog is shown asynchronously.
   auto *diag = new SaveDialog(
