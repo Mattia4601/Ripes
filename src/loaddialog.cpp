@@ -127,9 +127,8 @@ void LoadDialog::openFileButtonTriggered() {
   }
 
 #ifdef Q_OS_WASM
-  // Browse the remote file system. This dialog is already modal (exec()), and
-  // nested exec() calls are not supported on WASM, so the file dialog is
-  // opened asynchronously.
+  // Browse the remote file system. Nested exec() calls are not supported on
+  // WASM, so the file dialog is opened asynchronously.
   auto *dialog = new RemoteFileDialog(RemoteFileDialog::Mode::Open, title,
                                       filter, this);
   dialog->setAttribute(Qt::WA_DeleteOnClose);

@@ -19,15 +19,16 @@ namespace Ripes {
 namespace {
 
 // Base URL of the file API, e.g. "http://localhost:8080/api/files". Resolved
-// once from the origin of the page hosting Ripes.
+// once from the folder of the page hosting Ripes, so that the API is reached
+// also when the application is served under a path prefix, as on CrownLabs.
 QString s_apiBase;
 
 QString resolveApiBase() {
   const auto document = emscripten::val::global("document");
   const QUrl pageUrl(QString::fromStdString(document["URL"].as<std::string>()));
-  const QUrl origin = pageUrl.adjusted(QUrl::RemovePath | QUrl::RemoveQuery |
+  const QUrl folder = pageUrl.adjusted(QUrl::RemoveFilename | QUrl::RemoveQuery |
                                        QUrl::RemoveFragment);
-  return origin.toString() + QStringLiteral("/api/files");
+  return folder.toString() + QStringLiteral("api/files");
 }
 
 // ---------------------------------------------------------------------------
