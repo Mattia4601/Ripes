@@ -8,10 +8,15 @@
 #include <QtCore/private/qabstractfileengine_p.h>
 
 #include <emscripten.h>
+#include <emscripten/eventloop.h>
+#include <emscripten/proxying.h>
 #include <emscripten/val.h>
+
+#include <pthread.h>
 
 #include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace Ripes {
@@ -77,6 +82,32 @@ EM_JS(int, ripes_remotefs_xhr,
         return xhr.status;
       });
 
+// Same contract as ripes_remotefs_xhr, through fetch(). EM_ASYNC_JS suspends
+// the calling C++ code with Asyncify until the returned promise resolves.
+EM_ASYNC_JS(int, ripes_remotefs_fetch,
+            (const char *method, const char *url, const char *body,
+             int bodySize, char **outData, int *outSize),
+            {
+              try {
+                const init = {method : UTF8ToString(method)};
+                if (bodySize >= 0) {
+                  init.headers = {'Content-Type' : 'text/plain; charset=utf-8'};
+                  // slice() copies out of the (shared) wasm memory.
+                  init.body = HEAPU8.slice(body, body + bodySize);
+                }
+                const response = await fetch(UTF8ToString(url), init);
+                const bytes = new Uint8Array(await response.arrayBuffer());
+                const ptr = _malloc(bytes.length + 1);
+                HEAPU8.set(bytes, ptr);
+                HEAP32[outData >> 2] = ptr;
+                HEAP32[outSize >> 2] = bytes.length;
+                return response.status;
+              } catch (e) {
+                console.error('ripes_remotefs_fetch', e);
+                return 0;
+              }
+            });
+
 struct HttpResult {
   bool ok = false;
   int status = 0;
@@ -89,21 +120,59 @@ struct HttpResult {
   }
 };
 
-HttpResult httpRequest(const char *method, const QString &url,
-                       const QByteArray *body = nullptr) {
-  const QByteArray urlUtf8 = url.toUtf8();
+// Thread running the HTTP requests. Browser events reach Qt only on the main
+// thread, so here the Asyncify suspension of ripes_remotefs_fetch cannot be
+// interleaved with other calls into the application.
+pthread_t s_httpThread;
+
+void *httpThreadMain(void *) {
+  // Keep the thread alive after returning: it goes back to its event loop
+  // and executes the requests proxied to it.
+  emscripten_runtime_keepalive_push();
+  return nullptr;
+}
+
+struct HttpTask {
+  const char *method;
+  const char *url;
+  const char *body;
+  int bodySize;
+  int status = 0;
   char *data = nullptr;
   int size = 0;
+};
 
+// Executed on s_httpThread.
+void runHttpTask(void *arg) {
+  auto *task = static_cast<HttpTask *>(arg);
+  task->status = ripes_remotefs_fetch(task->method, task->url, task->body,
+                                      task->bodySize, &task->data, &task->size);
+}
+
+HttpResult httpRequest(const char *method, const QString &url,
+                       const QByteArray *body = nullptr) {
+  // Asyncify supports a single suspension at a time, so the requests are
+  // executed one by one.
+  static std::mutex mutex;
+  const std::lock_guard<std::mutex> lock(mutex);
+
+  const QByteArray urlUtf8 = url.toUtf8();
+  HttpTask task{method, urlUtf8.constData(),
+                body ? body->constData() : nullptr,
+                body ? int(body->size()) : -1};
+
+  // Run the request on s_httpThread and wait for it to complete.
   HttpResult result;
-  result.status = ripes_remotefs_xhr(
-      method, urlUtf8.constData(), body ? body->constData() : nullptr,
-      body ? int(body->size()) : -1, &data, &size);
+  if (!emscripten_proxy_sync(emscripten_proxy_get_system_queue(), s_httpThread,
+                             runHttpTask, &task))
+    return result;
+
+  result.status = task.status;
   result.ok = result.status == 200;
-  if (data) {
+  if (task.data) {
     if (result.ok)
-      result.data = QByteArray(data, size);
-    std::free(data);
+      result.data = QByteArray(task.data, task.size);
+    std::free(task.data);
   }
   return result;
 }
@@ -355,6 +424,7 @@ void installRemoteFileSystem() {
   if (handler)
     return;
   s_apiBase = resolveApiBase();
+  pthread_create(&s_httpThread, nullptr, httpThreadMain, nullptr);
   handler = new RemoteFileEngineHandler;
 }
 
