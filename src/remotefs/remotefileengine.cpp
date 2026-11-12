@@ -2,8 +2,8 @@
 
 #include <QApplication>
 #include <QDebug>
-#include <QHash>
 #include <QEventLoop>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QProgressDialog>
@@ -32,70 +32,49 @@ namespace {
 
 // Base URL of the file API, e.g. "http://localhost:8080/api/files". Resolved
 // once from the folder of the page hosting Ripes, so that the API is reached
-// also when the application is served under a path prefix, as on CrownLabs.
+// also when the application is served under a path prefix.
 QString s_apiBase;
 
 QString resolveApiBase() {
   const auto document = emscripten::val::global("document");
   const QUrl pageUrl(QString::fromStdString(document["URL"].as<std::string>()));
-  const QUrl folder = pageUrl.adjusted(QUrl::RemoveFilename | QUrl::RemoveQuery |
-                                       QUrl::RemoveFragment);
+  const QUrl folder = pageUrl.adjusted(
+      QUrl::RemoveFilename | QUrl::RemoveQuery | QUrl::RemoveFragment);
   return folder.toString() + QStringLiteral("api/files");
 }
 
 // ---------------------------------------------------------------------------
-// Synchronous HTTP through a synchronous XMLHttpRequest.
+// HTTP requests.
 //
-// QAbstractFileEngine is a blocking API, so the response must be available
-// before returning. Awaiting an asynchronous request with a nested event loop
-// does not work here: file operations are typically issued from within modal
-// dialogs, which already hold the single Asyncify suspension, and Qt also
-// calls the engine from worker threads (e.g. QFileInfoGatherer). A
-// synchronous XHR blocks the calling thread without needing an event loop and
-// works on the main thread as well as in workers.
+// QAbstractFileEngine is a blocking API: the response must be available
+// before returning. Requests are executed with fetch() on a dedicated thread
+// (s_httpThread), where the Asyncify suspension of EM_ASYNC_JS cannot be
+// interleaved with browser events, which reach Qt only on the main thread.
+//
+// The main thread does not block while waiting: it runs a local event loop,
+// suspended by Qt through Asyncify, and after a short delay shows a modal
+// dialog from which the request can be cancelled; requests also time out.
+// This requires that no other suspension is active, so dialogs on the remote
+// file system are shown with open() and the file actions of MainWindow are
+// queued (a suspension started while handling a keyboard event cannot be
+// resumed). Secondary threads (e.g. QFileInfoGatherer) block until the
+// request completes.
 // ---------------------------------------------------------------------------
 
 EM_JS_DEPS(ripes_remotefs, "$UTF8ToString,malloc");
 
-// Returns the HTTP status (0 on network failure). The response body is
-// returned in a malloc'ed buffer (*outData, *outSize) to be freed by the
-// caller. A negative bodySize means "no request body".
-EM_JS(int, ripes_remotefs_xhr,
-      (const char *method, const char *url, const char *body, int bodySize,
-       char **outData, int *outSize),
-      {
-        const xhr = new XMLHttpRequest();
-        try {
-          xhr.open(UTF8ToString(method), UTF8ToString(url), false);
-          // Receive the body as raw bytes (one char code per byte).
-          xhr.overrideMimeType('text/plain; charset=x-user-defined');
-          if (bodySize >= 0) {
-            xhr.setRequestHeader('Content-Type', 'text/plain; charset=utf-8');
-            // slice() copies out of the (shared) wasm memory.
-            xhr.send(HEAPU8.slice(body, body + bodySize));
-          } else {
-            xhr.send(null);
-          }
-        } catch (e) {
-          return 0;
-        }
-
-        const text = xhr.responseText || "";
-        const ptr = _malloc(text.length + 1);
-        for (let i = 0; i < text.length; ++i)
-          HEAPU8[ptr + i] = text.charCodeAt(i) & 0xff;
-        HEAP32[outData >> 2] = ptr;
-        HEAP32[outSize >> 2] = text.length;
-        return xhr.status;
-      });
-
-// Same contract as ripes_remotefs_xhr, through fetch(). EM_ASYNC_JS suspends
-// the calling C++ code with Asyncify until the returned promise resolves.
-// The request is aborted when *cancel becomes non-zero (checked every 50 ms)
-// or after timeoutMs milliseconds. Returns the HTTP status, 0 if the server
-// cannot be reached, -1 if cancelled and -2 on timeout. *outContentLength receives the
-// Content-Length header (-1 if absent), which is how HEAD requests report the
-// size of a file.
+// Performs a request with fetch(). EM_ASYNC_JS suspends the calling C++ code
+// with Asyncify until the returned promise resolves.
+//
+// Returns the HTTP status, 0 if the server cannot be reached, -1 if cancelled
+// and -2 on timeout. The request is aborted when *cancel becomes non-zero
+// (checked every 50 ms) or after timeoutMs milliseconds. A negative bodySize
+// means "no request body". The response body is returned in a malloc'ed
+// buffer (*outData, *outSize) to be freed by the caller; *outContentLength
+// receives the Content-Length header (-1 if absent), which is how HEAD
+// requests report the size of a file.
+// The body is JavaScript, which clang-format would break.
+// clang-format off
 EM_ASYNC_JS(int, ripes_remotefs_fetch,
             (const char *method, const char *url, const char *body,
              int bodySize, char **outData, int *outSize, int *cancel,
@@ -142,6 +121,7 @@ EM_ASYNC_JS(int, ripes_remotefs_fetch,
                 clearInterval(watchdog);
               }
             });
+// clang-format on
 
 // Maximum duration of a request.
 constexpr int RequestTimeoutMs = 10000;

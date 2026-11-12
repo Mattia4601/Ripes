@@ -12,8 +12,8 @@ namespace Ripes {
 /// Minimal file selector for the remote file system ("remote:/").
 ///
 /// QFileDialog cannot be used on top of the remote file system: its
-/// QFileSystemModel queries the file engine from a worker thread and issues a
-/// large number of synchronous requests, which blocks the application. This
+/// QFileSystemModel queries the file engine from a worker thread for every
+/// file and attribute, which results in a large number of requests. This
 /// dialog lists the remote directory once, from the main thread, through
 /// listRemoteFiles().
 ///

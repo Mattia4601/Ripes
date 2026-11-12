@@ -129,8 +129,8 @@ void LoadDialog::openFileButtonTriggered() {
 #ifdef RIPES_WITH_REMOTE_FS
   // Browse the remote file system. Nested exec() calls are not supported on
   // WASM, so the file dialog is opened asynchronously.
-  auto *dialog = new RemoteFileDialog(RemoteFileDialog::Mode::Open, title,
-                                      filter, this);
+  auto *dialog =
+      new RemoteFileDialog(RemoteFileDialog::Mode::Open, title, filter, this);
   if (!dialog->refresh()) {
     // Cancelled or failed: stay on this dialog.
     dialog->deleteLater();

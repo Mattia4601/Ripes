@@ -53,8 +53,8 @@ SaveDialog::SaveDialog(SourceType sourceType, QWidget *parent)
 #ifdef RIPES_WITH_REMOTE_FS
   // The remote file system is flat, its root being the only directory. This
   // is checked on the path itself, since QFileInfo would ask the server.
-  const bool pathIsDir = path == RemoteFileSystemPrefix ||
-                         path == RemoteFileSystemPrefix + u'/';
+  const bool pathIsDir =
+      path == RemoteFileSystemPrefix || path == RemoteFileSystemPrefix + u'/';
 #else
   const bool pathIsDir = QFileInfo(path).isDir();
 #endif
@@ -97,9 +97,8 @@ void SaveDialog::pathChanged() {
 
 void SaveDialog::openFileButtonTriggered() {
 #ifdef RIPES_WITH_REMOTE_FS
-  // Browse the remote file system. This dialog is already modal (exec()), and
-  // nested exec() calls are not supported on WASM, so the file dialog is
-  // opened asynchronously.
+  // Browse the remote file system. Nested exec() calls are not supported on
+  // WASM, so the file dialog is opened asynchronously.
   auto *dialog = new RemoteFileDialog(
       RemoteFileDialog::Mode::Save, tr("Save source file"),
       QStringLiteral("Source files (*.s *.as *.asm *.c)"), this);
@@ -113,9 +112,9 @@ void SaveDialog::openFileButtonTriggered() {
           [this](QString filename) {
             // The save path excludes the extension, which is appended based
             // on the source type (see sourcePath()).
-            filename.remove(QRegularExpression(
-                QStringLiteral("\\.(s|as|asm|c)$"),
-                QRegularExpression::CaseInsensitiveOption));
+            filename.remove(
+                QRegularExpression(QStringLiteral("\\.(s|as|asm|c)$"),
+                                   QRegularExpression::CaseInsensitiveOption));
             m_ui->filePath->setText(filename);
           });
   dialog->open();

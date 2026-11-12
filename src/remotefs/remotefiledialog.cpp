@@ -21,9 +21,8 @@ QStringList nameFiltersFrom(const QString &filter) {
   const QString first = filter.section(QStringLiteral(";;"), 0, 0);
   const auto match =
       QRegularExpression(QStringLiteral("\\(([^)]*)\\)")).match(first);
-  QStringList patterns =
-      (match.hasMatch() ? match.captured(1) : first)
-          .split(u' ', Qt::SkipEmptyParts);
+  QStringList patterns = (match.hasMatch() ? match.captured(1) : first)
+                             .split(u' ', Qt::SkipEmptyParts);
   if (patterns.isEmpty())
     patterns << QStringLiteral("*");
   return patterns;
@@ -76,10 +75,10 @@ bool RemoteFileDialog::refresh() {
     return false;
   case RemoteRequestStatus::Failed: {
     // Opened with open(): nested exec() calls are not supported on WASM.
-    auto *box = new QMessageBox(QMessageBox::Warning, windowTitle(),
-                                tr("Cannot list the files on the server: %1")
-                                    .arg(error),
-                                QMessageBox::Ok, parentWidget());
+    auto *box = new QMessageBox(
+        QMessageBox::Warning, windowTitle(),
+        tr("Cannot list the files on the server: %1").arg(error),
+        QMessageBox::Ok, parentWidget());
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->open();
     return false;
