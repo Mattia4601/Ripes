@@ -1,8 +1,13 @@
 #include "remotefileengine.h"
 
+#include <QApplication>
 #include <QDebug>
+#include <QHash>
+#include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QProgressDialog>
+#include <QTimer>
 #include <QUrl>
 
 #include <QtCore/private/qabstractfileengine_p.h>
@@ -10,10 +15,12 @@
 #include <emscripten.h>
 #include <emscripten/eventloop.h>
 #include <emscripten/proxying.h>
+#include <emscripten/threading.h>
 #include <emscripten/val.h>
 
 #include <pthread.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -84,18 +91,36 @@ EM_JS(int, ripes_remotefs_xhr,
 
 // Same contract as ripes_remotefs_xhr, through fetch(). EM_ASYNC_JS suspends
 // the calling C++ code with Asyncify until the returned promise resolves.
+// The request is aborted when *cancel becomes non-zero (checked every 50 ms)
+// or after timeoutMs milliseconds. *outContentLength receives the
+// Content-Length header (-1 if absent), which is how HEAD requests report the
+// size of a file.
 EM_ASYNC_JS(int, ripes_remotefs_fetch,
             (const char *method, const char *url, const char *body,
-             int bodySize, char **outData, int *outSize),
+             int bodySize, char **outData, int *outSize, int *cancel,
+             int timeoutMs, int *outContentLength),
             {
+              const controller = new AbortController();
+              const start = Date.now();
+              const watchdog = setInterval(() => {
+                if (Atomics.load(HEAP32, cancel >> 2) !== 0 ||
+                    Date.now() - start > timeoutMs)
+                  controller.abort();
+              }, 50);
               try {
-                const init = {method : UTF8ToString(method)};
+                const init = {
+                  method : UTF8ToString(method),
+                  signal : controller.signal
+                };
                 if (bodySize >= 0) {
                   init.headers = {'Content-Type' : 'text/plain; charset=utf-8'};
                   // slice() copies out of the (shared) wasm memory.
                   init.body = HEAPU8.slice(body, body + bodySize);
                 }
                 const response = await fetch(UTF8ToString(url), init);
+                const length = response.headers.get('Content-Length');
+                HEAP32[outContentLength >> 2] =
+                    length === null ? -1 : parseInt(length, 10);
                 const bytes = new Uint8Array(await response.arrayBuffer());
                 const ptr = _malloc(bytes.length + 1);
                 HEAPU8.set(bytes, ptr);
@@ -105,6 +130,8 @@ EM_ASYNC_JS(int, ripes_remotefs_fetch,
               } catch (e) {
                 console.error('ripes_remotefs_fetch', e);
                 return 0;
+              } finally {
+                clearInterval(watchdog);
               }
             });
 
@@ -112,6 +139,7 @@ struct HttpResult {
   bool ok = false;
   int status = 0;
   QByteArray data;
+  qint64 contentLength = -1;
 
   QString errorString() const {
     if (status == 0)
@@ -132,47 +160,144 @@ void *httpThreadMain(void *) {
   return nullptr;
 }
 
+// Maximum duration of a request.
+constexpr int RequestTimeoutMs = 10000;
+// Delay before the waiting dialog is shown, so that it does not flash for
+// the (usually very short) requests.
+constexpr int WaitDialogDelayMs = 300;
+
 struct HttpTask {
-  const char *method;
-  const char *url;
-  const char *body;
-  int bodySize;
+  QByteArray method;
+  QByteArray url;
+  QByteArray body;
+  bool hasBody = false;
   int status = 0;
   char *data = nullptr;
   int size = 0;
+  int contentLength = -1;
+  // Written by the main thread, read by the fetch watchdog.
+  std::atomic<int> cancel{0};
+  // Written by s_httpThread when the request is complete.
+  std::atomic<bool> done{false};
 };
 
 // Executed on s_httpThread.
-void runHttpTask(void *arg) {
-  auto *task = static_cast<HttpTask *>(arg);
-  task->status = ripes_remotefs_fetch(task->method, task->url, task->body,
-                                      task->bodySize, &task->data, &task->size);
+void runHttpTask(HttpTask *task) {
+  task->status = ripes_remotefs_fetch(
+      task->method.constData(), task->url.constData(),
+      task->hasBody ? task->body.constData() : nullptr,
+      task->hasBody ? int(task->body.size()) : -1, &task->data, &task->size,
+      reinterpret_cast<int *>(&task->cancel), RequestTimeoutMs,
+      &task->contentLength);
+  task->done = true;
+}
+
+void runHttpTaskSync(void *arg) { runHttpTask(static_cast<HttpTask *>(arg)); }
+
+void runHttpTaskAsync(void *arg) {
+  // Keeps the task alive until the request is complete.
+  auto *task = static_cast<std::shared_ptr<HttpTask> *>(arg);
+  runHttpTask(task->get());
+  delete task;
+}
+
+// Waits on the main thread for the request to complete, without blocking
+// the browser: a local event loop is run (suspended through Asyncify by Qt),
+// and after WaitDialogDelayMs a modal dialog lets the user cancel.
+void waitOnMainThread(HttpTask &task) {
+  QTimer poll;
+  poll.setInterval(20);
+
+  // First phase: user input is deferred, so that no other operation is
+  // started while waiting.
+  {
+    QEventLoop loop;
+    QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+      if (task.done)
+        loop.quit();
+    });
+    QTimer::singleShot(WaitDialogDelayMs, &loop, &QEventLoop::quit);
+    poll.start();
+    loop.exec(QEventLoop::ExcludeUserInputEvents);
+    poll.stop();
+  }
+  if (task.done)
+    return;
+
+  // Second phase: the request takes longer, show a modal dialog. Opened with
+  // open() and not exec(), since the event loop below already suspends.
+  auto *dialog = new QProgressDialog(QObject::tr("Waiting for the server..."),
+                                     QObject::tr("Cancel"), 0, 0,
+                                     QApplication::activeWindow());
+  dialog->setWindowModality(Qt::ApplicationModal);
+  dialog->setMinimumDuration(0);
+  QEventLoop loop;
+  QObject::connect(dialog, &QProgressDialog::canceled, &loop,
+                   [&] { task.cancel = 1; });
+  QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+    if (task.done)
+      loop.quit();
+  });
+  dialog->open();
+  poll.start();
+  loop.exec();
+  poll.stop();
+
+  // Close the dialog while it is still intact, so that the focus moves back
+  // to the window below, and delete it later from the event loop: destroying
+  // it right away, while open and focused, crashes in the focus handling.
+  QObject::disconnect(dialog, nullptr, &loop, nullptr);
+  dialog->close();
+  dialog->deleteLater();
 }
 
 HttpResult httpRequest(const char *method, const QString &url,
                        const QByteArray *body = nullptr) {
-  // Asyncify supports a single suspension at a time, so the requests are
-  // executed one by one.
-  static std::mutex mutex;
-  const std::lock_guard<std::mutex> lock(mutex);
-
-  const QByteArray urlUtf8 = url.toUtf8();
-  HttpTask task{method, urlUtf8.constData(),
-                body ? body->constData() : nullptr,
-                body ? int(body->size()) : -1};
-
-  // Run the request on s_httpThread and wait for it to complete.
   HttpResult result;
-  if (!emscripten_proxy_sync(emscripten_proxy_get_system_queue(), s_httpThread,
-                             runHttpTask, &task))
-    return result;
 
-  result.status = task.status;
+  // Requests are executed one at a time. A request started on the main
+  // thread while waiting for another one (re-entrancy through the local
+  // event loop) is rejected.
+  static std::mutex mutex;
+  std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+  const bool onMainThread = emscripten_is_main_runtime_thread();
+  if (!lock.owns_lock()) {
+    if (onMainThread)
+      return result;
+    lock.lock();
+  }
+
+  auto task = std::make_shared<HttpTask>();
+  task->method = method;
+  task->url = url.toUtf8();
+  if (body) {
+    task->body = *body;
+    task->hasBody = true;
+  }
+
+  if (onMainThread) {
+    // Start the request on s_httpThread without waiting for it.
+    auto *arg = new std::shared_ptr<HttpTask>(task);
+    if (!emscripten_proxy_async(emscripten_proxy_get_system_queue(),
+                                s_httpThread, runHttpTaskAsync, arg)) {
+      delete arg;
+      return result;
+    }
+    waitOnMainThread(*task);
+  } else {
+    // Secondary threads may block: run the request and wait for it.
+    if (!emscripten_proxy_sync(emscripten_proxy_get_system_queue(),
+                               s_httpThread, runHttpTaskSync, task.get()))
+      return result;
+  }
+
+  result.status = task->status;
   result.ok = result.status == 200;
-  if (task.data) {
+  result.contentLength = task->contentLength;
+  if (task->data) {
     if (result.ok)
-      result.data = QByteArray(task.data, task.size);
-    std::free(task.data);
+      result.data = QByteArray(task->data, task->size);
+    std::free(task->data);
   }
   return result;
 }
@@ -185,12 +310,37 @@ QString fileUrl(const QString &name) {
 // Directory iterator for the (flat) remote root.
 // ---------------------------------------------------------------------------
 
+// Names returned by the listings currently being iterated. While a listing
+// is iterated, Qt creates an engine for each entry and asks whether it exists:
+// the answer is taken from here instead of asking the server again. The names
+// are removed when the iteration ends, so no information outlives the listing.
+std::mutex s_listedNamesMutex;
+QHash<QString, int> s_listedNames;
+
+bool isListed(const QString &name) {
+  const std::lock_guard<std::mutex> lock(s_listedNamesMutex);
+  return s_listedNames.contains(name);
+}
+
 class RemoteDirIterator : public QAbstractFileEngineIterator {
 public:
   RemoteDirIterator(const QString &path, QDirListing::IteratorFlags filters,
                     const QStringList &nameFilters, QStringList entries)
       : QAbstractFileEngineIterator(path, filters, nameFilters),
-        m_entries(std::move(entries)) {}
+        m_entries(std::move(entries)) {
+    const std::lock_guard<std::mutex> lock(s_listedNamesMutex);
+    for (const QString &name : std::as_const(m_entries))
+      ++s_listedNames[name];
+  }
+
+  ~RemoteDirIterator() override {
+    const std::lock_guard<std::mutex> lock(s_listedNamesMutex);
+    for (const QString &name : std::as_const(m_entries)) {
+      auto it = s_listedNames.find(name);
+      if (it != s_listedNames.end() && --it.value() == 0)
+        s_listedNames.erase(it);
+    }
+  }
 
   bool advance() override {
     if (m_index + 1 >= m_entries.size())
@@ -226,7 +376,7 @@ public:
     if (name == u'.')
       name.clear();
     m_name = name;
-    m_metadata.reset();
+    m_info.reset();
   }
 
   bool open(QIODevice::OpenMode openMode,
@@ -242,12 +392,13 @@ public:
     const bool read = openMode & QIODevice::ReadOnly;
     const bool write = openMode & QIODevice::WriteOnly;
     if (read && !write) {
-      const Metadata &meta = metadata();
-      if (!meta.exists) {
-        setError(QFile::OpenError, meta.error);
+      // The content is always fetched when the file is opened.
+      const HttpResult result = httpRequest("GET", fileUrl(m_name));
+      if (!result.ok) {
+        setError(QFile::OpenError, result.errorString());
         return false;
       }
-      m_buffer = meta.content;
+      m_buffer = result.data;
     } else if (write && !read && !(openMode & QIODevice::Append)) {
       m_buffer.clear();
     } else {
@@ -267,7 +418,7 @@ public:
     if (!wasWriting)
       return true;
 
-    m_metadata.reset();
+    m_info.reset();
     const HttpResult result = httpRequest("PUT", fileUrl(m_name), &m_buffer);
     if (!result.ok) {
       setError(QFile::WriteError, result.errorString());
@@ -312,7 +463,7 @@ public:
       return m_buffer.size();
     if (isRoot())
       return 0;
-    return metadata().content.size();
+    return info().size;
   }
 
   FileFlags fileFlags(FileFlags type) const override {
@@ -324,7 +475,8 @@ public:
       return perms | ExeOwnerPerm | ExeUserPerm | DirectoryType | ExistsFlag |
              RootFlag;
 
-    if (!metadata().exists)
+    // The remote file system is flat: every other existing name is a file.
+    if (!isListed(m_name) && !info().exists)
       return {};
     return perms | FileType | ExistsFlag;
   }
@@ -373,35 +525,33 @@ public:
   }
 
 private:
-  struct Metadata {
+  struct Info {
     bool exists = false;
-    QByteArray content;
-    QString error;
+    qint64 size = 0;
   };
 
   bool isRoot() const { return m_name.isEmpty(); }
 
-  // There is no metadata endpoint yet: existence and size are derived from a
-  // GET of the file, cached for the lifetime of this engine instance (Qt
-  // creates one per QFile/QFileInfo).
-  const Metadata &metadata() const {
-    if (!m_metadata) {
-      const HttpResult result = httpRequest("GET", fileUrl(m_name));
-      Metadata meta;
-      meta.exists = result.ok;
-      meta.content = result.data;
-      if (!result.ok)
-        meta.error = result.errorString();
-      m_metadata = meta;
+  // Existence and size of the file, from a HEAD request (no content is
+  // transferred). Kept for the lifetime of this engine instance only (Qt
+  // creates one per QFile/QFileInfo), so that e.g. exists() followed by
+  // size() does not repeat the request.
+  const Info &info() const {
+    if (!m_info) {
+      const HttpResult result = httpRequest("HEAD", fileUrl(m_name));
+      Info info;
+      info.exists = result.ok;
+      info.size = qMax<qint64>(0, result.contentLength);
+      m_info = info;
     }
-    return *m_metadata;
+    return *m_info;
   }
 
   QString m_name;
   QByteArray m_buffer;
   qint64 m_pos = 0;
   QIODevice::OpenMode m_openMode = QIODevice::NotOpen;
-  mutable std::optional<Metadata> m_metadata;
+  mutable std::optional<Info> m_info;
 };
 
 class RemoteFileEngineHandler : public QAbstractFileEngineHandler {
