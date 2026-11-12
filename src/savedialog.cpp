@@ -50,7 +50,15 @@ SaveDialog::SaveDialog(SourceType sourceType, QWidget *parent)
     path = QDir::currentPath();
   }
 #endif
-  if (QFileInfo(path).isDir()) {
+#ifdef RIPES_WITH_REMOTE_FS
+  // The remote file system is flat, its root being the only directory. This
+  // is checked on the path itself, since QFileInfo would ask the server.
+  const bool pathIsDir = path == RemoteFileSystemPrefix ||
+                         path == RemoteFileSystemPrefix + u'/';
+#else
+  const bool pathIsDir = QFileInfo(path).isDir();
+#endif
+  if (pathIsDir) {
     path += QDir::separator();
   }
   m_ui->filePath->setText(path);
