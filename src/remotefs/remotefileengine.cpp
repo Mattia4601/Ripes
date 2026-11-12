@@ -92,7 +92,8 @@ EM_JS(int, ripes_remotefs_xhr,
 // Same contract as ripes_remotefs_xhr, through fetch(). EM_ASYNC_JS suspends
 // the calling C++ code with Asyncify until the returned promise resolves.
 // The request is aborted when *cancel becomes non-zero (checked every 50 ms)
-// or after timeoutMs milliseconds. *outContentLength receives the
+// or after timeoutMs milliseconds. Returns the HTTP status, 0 if the server
+// cannot be reached, -1 if cancelled and -2 on timeout. *outContentLength receives the
 // Content-Length header (-1 if absent), which is how HEAD requests report the
 // size of a file.
 EM_ASYNC_JS(int, ripes_remotefs_fetch,
@@ -102,10 +103,15 @@ EM_ASYNC_JS(int, ripes_remotefs_fetch,
             {
               const controller = new AbortController();
               const start = Date.now();
+              let abortStatus = 0;
               const watchdog = setInterval(() => {
-                if (Atomics.load(HEAP32, cancel >> 2) !== 0 ||
-                    Date.now() - start > timeoutMs)
-                  controller.abort();
+                if (Atomics.load(HEAP32, cancel >> 2) !== 0)
+                  abortStatus = -1;
+                else if (Date.now() - start > timeoutMs)
+                  abortStatus = -2;
+                else
+                  return;
+                controller.abort();
               }, 50);
               try {
                 const init = {
@@ -128,12 +134,23 @@ EM_ASYNC_JS(int, ripes_remotefs_fetch,
                 HEAP32[outSize >> 2] = bytes.length;
                 return response.status;
               } catch (e) {
-                console.error('ripes_remotefs_fetch', e);
+                if (abortStatus !== 0)
+                  return abortStatus;
+                console.warn('ripes_remotefs_fetch', e);
                 return 0;
               } finally {
                 clearInterval(watchdog);
               }
             });
+
+// Maximum duration of a request.
+constexpr int RequestTimeoutMs = 10000;
+// Delay before the waiting dialog is shown, so that it does not flash for
+// the (usually very short) requests.
+constexpr int WaitDialogDelayMs = 300;
+// Statuses returned by ripes_remotefs_fetch when the request is aborted.
+constexpr int CancelledStatus = -1;
+constexpr int TimeoutStatus = -2;
 
 struct HttpResult {
   bool ok = false;
@@ -141,10 +158,20 @@ struct HttpResult {
   QByteArray data;
   qint64 contentLength = -1;
 
+  bool cancelled() const { return status == CancelledStatus; }
+
   QString errorString() const {
-    if (status == 0)
-      return QStringLiteral("Network error");
-    return QStringLiteral("HTTP error %1").arg(status);
+    switch (status) {
+    case CancelledStatus:
+      return QObject::tr("Request cancelled");
+    case TimeoutStatus:
+      return QObject::tr("The server did not respond within %1 seconds")
+          .arg(RequestTimeoutMs / 1000);
+    case 0:
+      return QObject::tr("Cannot reach the server");
+    default:
+      return QObject::tr("HTTP error %1").arg(status);
+    }
   }
 };
 
@@ -159,12 +186,6 @@ void *httpThreadMain(void *) {
   emscripten_runtime_keepalive_push();
   return nullptr;
 }
-
-// Maximum duration of a request.
-constexpr int RequestTimeoutMs = 10000;
-// Delay before the waiting dialog is shown, so that it does not flash for
-// the (usually very short) requests.
-constexpr int WaitDialogDelayMs = 300;
 
 struct HttpTask {
   QByteArray method;
@@ -300,6 +321,23 @@ HttpResult httpRequest(const char *method, const QString &url,
     std::free(task->data);
   }
   return result;
+}
+
+// GET of the list of file names (a JSON array).
+RemoteRequestStatus fetchListing(QStringList &names, QString &errorString) {
+  names.clear();
+  errorString.clear();
+  const HttpResult result = httpRequest("GET", s_apiBase);
+  if (!result.ok) {
+    if (result.cancelled())
+      return RemoteRequestStatus::Cancelled;
+    errorString = result.errorString();
+    return RemoteRequestStatus::Failed;
+  }
+  const QJsonArray array = QJsonDocument::fromJson(result.data).array();
+  for (const QJsonValue &value : array)
+    names.append(value.toString());
+  return RemoteRequestStatus::Ok;
 }
 
 QString fileUrl(const QString &name) {
@@ -509,15 +547,9 @@ public:
       return {};
 
     QStringList entries;
-    const HttpResult result = httpRequest("GET", s_apiBase);
-    if (result.ok) {
-      const QJsonArray array = QJsonDocument::fromJson(result.data).array();
-      for (const QJsonValue &value : array)
-        entries.append(value.toString());
-    } else {
-      qWarning() << "RemoteFileEngine: cannot list remote files:"
-                 << result.errorString();
-    }
+    QString error;
+    if (fetchListing(entries, error) == RemoteRequestStatus::Failed)
+      qWarning() << "RemoteFileEngine: cannot list remote files:" << error;
 
     // Type and name filters are applied by QDirListing.
     return std::make_unique<RemoteDirIterator>(path, filters, filterNames,
@@ -553,6 +585,14 @@ private:
   QIODevice::OpenMode m_openMode = QIODevice::NotOpen;
   mutable std::optional<Info> m_info;
 };
+
+} // namespace
+
+RemoteRequestStatus listRemoteFiles(QStringList &names, QString &errorString) {
+  return fetchListing(names, errorString);
+}
+
+namespace {
 
 class RemoteFileEngineHandler : public QAbstractFileEngineHandler {
 public:

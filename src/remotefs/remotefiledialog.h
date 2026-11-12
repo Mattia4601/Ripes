@@ -15,10 +15,11 @@ namespace Ripes {
 /// QFileSystemModel queries the file engine from a worker thread and issues a
 /// large number of synchronous requests, which blocks the application. This
 /// dialog lists the remote directory once, from the main thread, through
-/// QDir::entryList().
+/// listRemoteFiles().
 ///
 /// Nested exec() calls are not supported on WASM, so the dialog is meant to be
-/// shown with open(); the selection is reported through fileSelected().
+/// shown with open(), after refresh() has succeeded; the selection is reported
+/// through fileSelected().
 class RemoteFileDialog : public QDialog {
   Q_OBJECT
 
@@ -30,6 +31,10 @@ public:
   RemoteFileDialog(Mode mode, const QString &title, const QString &filter,
                    QWidget *parent = nullptr);
 
+  /// Fetches the list of files. Returns false if the request was cancelled
+  /// or failed; in the latter case an error message is shown.
+  bool refresh();
+
   void accept() override;
 
 signals:
@@ -37,7 +42,6 @@ signals:
   void fileSelected(const QString &path);
 
 private:
-  void refresh();
   void updateOkButton();
 
   Mode m_mode;

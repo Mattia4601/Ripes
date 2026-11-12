@@ -131,6 +131,11 @@ void LoadDialog::openFileButtonTriggered() {
   // WASM, so the file dialog is opened asynchronously.
   auto *dialog = new RemoteFileDialog(RemoteFileDialog::Mode::Open, title,
                                       filter, this);
+  if (!dialog->refresh()) {
+    // Cancelled or failed: stay on this dialog.
+    dialog->deleteLater();
+    return;
+  }
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &RemoteFileDialog::fileSelected, this,
           [this](const QString &filename) {

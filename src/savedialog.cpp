@@ -103,6 +103,11 @@ void SaveDialog::openFileButtonTriggered() {
   auto *dialog = new RemoteFileDialog(
       RemoteFileDialog::Mode::Save, tr("Save source file"),
       QStringLiteral("Source files (*.s *.as *.asm *.c)"), this);
+  if (!dialog->refresh()) {
+    // Cancelled or failed: stay on this dialog.
+    dialog->deleteLater();
+    return;
+  }
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &RemoteFileDialog::fileSelected, this,
           [this](QString filename) {

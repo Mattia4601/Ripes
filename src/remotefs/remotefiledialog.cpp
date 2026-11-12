@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QVBoxLayout>
@@ -62,15 +63,39 @@ RemoteFileDialog::RemoteFileDialog(Mode mode, const QString &title,
           &RemoteFileDialog::accept);
   connect(m_buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-  refresh();
   updateOkButton();
 }
 
-void RemoteFileDialog::refresh() {
-  m_entries = QDir(RemoteFileSystemPrefix + u'/')
-                  .entryList(m_nameFilters, QDir::Files, QDir::Name);
+bool RemoteFileDialog::refresh() {
+  QStringList names;
+  QString error;
+  switch (listRemoteFiles(names, error)) {
+  case RemoteRequestStatus::Ok:
+    break;
+  case RemoteRequestStatus::Cancelled:
+    return false;
+  case RemoteRequestStatus::Failed: {
+    // Opened with open(): nested exec() calls are not supported on WASM.
+    auto *box = new QMessageBox(QMessageBox::Warning, windowTitle(),
+                                tr("Cannot list the files on the server: %1")
+                                    .arg(error),
+                                QMessageBox::Ok, parentWidget());
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
+    return false;
+  }
+  }
+
+  m_entries.clear();
+  for (const QString &name : std::as_const(names)) {
+    if (QDir::match(m_nameFilters, name))
+      m_entries.append(name);
+  }
+  m_entries.sort();
   m_fileList->clear();
   m_fileList->addItems(m_entries);
+  updateOkButton();
+  return true;
 }
 
 void RemoteFileDialog::updateOkButton() {
