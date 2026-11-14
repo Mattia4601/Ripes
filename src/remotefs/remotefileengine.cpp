@@ -48,17 +48,18 @@ QString resolveApiBase() {
 //
 // QAbstractFileEngine is a blocking API: the response must be available
 // before returning. Requests are executed with fetch() on a dedicated thread
-// (s_httpThread), where the Asyncify suspension of EM_ASYNC_JS cannot be
-// interleaved with browser events, which reach Qt only on the main thread.
+// (s_httpThread). On the main thread the Asyncify suspension of EM_ASYNC_JS
+// would be unknown to Qt, which would keep handling events while the caller
+// is suspended (running deferred deletions, or starting a second suspension
+// on user input); browser events never reach s_httpThread.
 //
 // The main thread does not block while waiting: it runs a local event loop,
 // suspended by Qt through Asyncify, and after a short delay shows a modal
 // dialog from which the request can be cancelled; requests also time out.
 // This requires that no other suspension is active, so dialogs on the remote
 // file system are shown with open() and the file actions of MainWindow are
-// queued (a suspension started while handling a keyboard event cannot be
-// resumed). Secondary threads (e.g. QFileInfoGatherer) block until the
-// request completes.
+// queued (see MainWindow). Secondary threads (e.g. QFileInfoGatherer) block
+// until the request completes.
 // ---------------------------------------------------------------------------
 
 EM_JS_DEPS(ripes_remotefs, "$UTF8ToString,malloc");

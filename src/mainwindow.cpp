@@ -240,9 +240,10 @@ void MainWindow::setupMenus() {
 
 #ifdef RIPES_WITH_REMOTE_FS
   // Remote file operations wait for the server by suspending the application
-  // (see remotefs/remotefileengine.cpp). Resuming does not work if the
-  // suspension starts while a keyboard event is being handled, so the file
-  // actions are queued and run after the event handler has returned.
+  // (see remotefs/remotefileengine.cpp). The browser regains control during the
+  // suspension, before Qt calls preventDefault() on the key event, and would
+  // run its default action (e.g. "Save page" for Ctrl/Cmd+S): the file actions
+  // are therefore queued and run after the event handler has returned.
   const auto fileActionConnection = Qt::QueuedConnection;
 #else
   const auto fileActionConnection = Qt::AutoConnection;
@@ -409,11 +410,13 @@ void MainWindow::loadFileTriggered() {
   auto *diag = new LoadDialog(this);
   diag->setAttribute(Qt::WA_DeleteOnClose);
   connect(diag, &QDialog::accepted, this, [this, diag] {
+    // Copied, so that nothing refers to the dialog while the file is loaded.
+    const LoadFileParams params = diag->getParams();
     if (static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
-            ->loadExternalFile(diag->getParams())) {
+            ->loadExternalFile(params)) {
       // Set the current save path to the loaded file. Only store the file
       // basename without extension.
-      QFileInfo info = QFileInfo(diag->getParams().filepath);
+      QFileInfo info = QFileInfo(params.filepath);
       auto savePath = info.dir().path() + QDir::separator() + info.baseName();
       RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
       RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
