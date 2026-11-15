@@ -60,6 +60,16 @@ QString resolveApiBase() {
 // file system are shown with open() and the file actions of MainWindow are
 // queued (see MainWindow). Secondary threads (e.g. QFileInfoGatherer) block
 // until the request completes.
+//
+// Possible simplification: the dedicated thread is only needed because a
+// suspension started from JavaScript on the main thread is unknown to Qt. If
+// a future Qt or Emscripten version allowed the main thread to wait for a
+// promise in a way the event dispatcher is aware of (deferring deletions and
+// user input, as QEventLoop::exec() does), requests from the main thread
+// could call fetch() directly, without proxying them to s_httpThread and
+// polling for completion in waitOnMainThread(). Queuing the file actions of
+// MainWindow remains necessary with any suspension mechanism, since
+// preventDefault() is called on key events only after Qt has handled them.
 // ---------------------------------------------------------------------------
 
 EM_JS_DEPS(ripes_remotefs, "$UTF8ToString,malloc");
