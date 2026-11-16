@@ -1,0 +1,14 @@
+{
+  "name": "ripes-remote-fs-server",
+  "version": "1.0.0",
+  "description": "Server for the WebAssembly build of Ripes with the remote file system",
+  "private": true,
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

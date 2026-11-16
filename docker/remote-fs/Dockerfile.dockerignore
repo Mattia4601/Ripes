@@ -1,0 +1,10 @@
+# Used instead of a .dockerignore at the root of the build context when
+# building with -f docker/remote-fs/Dockerfile.
+**/.git
+# Local build folders (not resources/icons/build.svg)
+build
+build-*
+build_*
+**/node_modules
+docker/remote-fs/static
+docker/remote-fs/data
