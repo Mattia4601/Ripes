@@ -430,8 +430,10 @@ static bool writeTextFile(QFile &file, const QString &data) {
   if (file.open(QIODevice::WriteOnly)) {
     QTextStream stream(&file);
     stream << data;
+    // Errors may only surface when the file is closed (e.g. when the data is
+    // written out by a remote file engine).
     file.close();
-    return true;
+    return file.error() == QFileDevice::NoError;
   }
   return false;
 }
@@ -440,7 +442,7 @@ static bool writeBinaryFile(QFile &file, const QByteArray &data) {
   if (file.open(QIODevice::WriteOnly)) {
     file.write(data);
     file.close();
-    return true;
+    return file.error() == QFileDevice::NoError;
   }
   return false;
 }
