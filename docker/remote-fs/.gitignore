@@ -1,0 +1,4 @@
+node_modules/
+# Files of Ripes and stored files when the server is run outside Docker
+static/
+data/
