@@ -16,6 +16,10 @@
 #include <QPushButton>
 #include <QRegularExpressionValidator>
 
+#ifdef RIPES_WITH_REMOTE_FS
+#include "remotefs/remotefiledialog.h"
+#endif
+
 namespace Ripes {
 
 LoadDialog::TypeButtonID LoadDialog::s_typeIndex = TypeButtonID::ELF;
@@ -37,8 +41,18 @@ LoadDialog::LoadDialog(QWidget *parent)
           &LoadDialog::inputTypeChanged);
   connect(m_ui->openFile, &QPushButton::clicked, this,
           &LoadDialog::openFileButtonTriggered);
+#ifdef RIPES_WITH_REMOTE_FS
+  // Validating a remote path queries the server, which suspends the
+  // application. If this happens while the key event that changed the text is
+  // still being handled, the browser also performs its default action and the
+  // character is typed twice. Validate once the key event has been handled,
+  // as for the file actions in MainWindow::setupMenus.
+  connect(m_ui->filePath, &QLineEdit::textChanged, this,
+          &LoadDialog::validateCurrentFile, Qt::QueuedConnection);
+#else
   connect(m_ui->filePath, &QLineEdit::textChanged, this,
           &LoadDialog::validateCurrentFile);
+#endif
 
   // ===================== Page setups =====================
 
@@ -65,6 +79,13 @@ LoadDialog::LoadDialog(QWidget *parent)
 
   // ELF page
   m_ui->currentISA->setText(ProcessorHandler::currentISA()->name());
+
+#ifdef RIPES_WITH_REMOTE_FS
+  // The remote file system only stores source files.
+  m_ui->elfRadioButton->setEnabled(false);
+  m_ui->binaryRadioButton->setEnabled(false);
+  s_typeIndex = TypeButtonID::Source;
+#endif
 
   // default selection
   m_fileTypeButtons->button(s_typeIndex)->toggle();
@@ -116,7 +137,24 @@ void LoadDialog::openFileButtonTriggered() {
   }
   }
 
-#ifdef __EMSCRIPTEN__
+#ifdef RIPES_WITH_REMOTE_FS
+  // Browse the remote file system. Nested exec() calls are not supported on
+  // WASM, so the file dialog is opened asynchronously.
+  auto *dialog =
+      new RemoteFileDialog(RemoteFileDialog::Mode::Open, title, filter, this);
+  if (!dialog->refresh()) {
+    // Cancelled or failed: stay on this dialog.
+    dialog->deleteLater();
+    return;
+  }
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &RemoteFileDialog::fileSelected, this,
+          [this](const QString &filename) {
+            if (!filename.isEmpty())
+              m_ui->filePath->setText(filename);
+          });
+  dialog->open();
+#elif defined(__EMSCRIPTEN__)
   // The browser sandbox does not expose the local file system. Let the user
   // pick a file through the browser and copy it to the in-memory file system,
   // from where it is loaded like any other file.

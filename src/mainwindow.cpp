@@ -238,11 +238,23 @@ void MainWindow::setupMenus() {
           &MainWindow::newProgramTriggered);
   m_ui->menuFile->addAction(newAction);
 
+#ifdef RIPES_WITH_REMOTE_FS
+  // Remote file operations wait for the server by suspending the application
+  // (see remotefs/remotefileengine.cpp). The browser regains control during the
+  // suspension, before Qt calls preventDefault() on the key event, and would
+  // run its default action (e.g. "Save page" for Ctrl/Cmd+S): the file actions
+  // are therefore queued and run after the event handler has returned.
+  const auto fileActionConnection = Qt::QueuedConnection;
+#else
+  const auto fileActionConnection = Qt::AutoConnection;
+#endif
+
   const QIcon loadIcon = QIcon(":/icons/loadfile.svg");
   auto *loadAction = new QAction(loadIcon, "Load Program", this);
   loadAction->setShortcut(QKeySequence::Open);
-  connect(loadAction, &QAction::triggered, this,
-          [this] { this->loadFileTriggered(); });
+  connect(
+      loadAction, &QAction::triggered, this,
+      [this] { this->loadFileTriggered(); }, fileActionConnection);
   m_ui->menuFile->addAction(loadAction);
   m_ui->menuFile->addSeparator();
 
@@ -251,7 +263,7 @@ void MainWindow::setupMenus() {
 
   m_ui->menuFile->addSeparator();
 
-#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__) && !defined(RIPES_WITH_REMOTE_FS)
   // The editor contents are persisted in browser storage, so on the web,
   // saving means downloading files.
   auto *downloadAction =
@@ -265,11 +277,13 @@ void MainWindow::setupMenus() {
       [downloadAction](bool enabled) { downloadAction->setEnabled(enabled); });
   m_ui->menuFile->addAction(downloadAction);
 #else
+  // With the remote file system, files are saved on the server, so the web
+  // version keeps Save File and Save File As.
   const QIcon saveIcon = QIcon(":/icons/save.svg");
   auto *saveAction = new QAction(saveIcon, "Save File", this);
   saveAction->setShortcut(QKeySequence::Save);
   connect(saveAction, &QAction::triggered, this,
-          &MainWindow::saveFilesTriggered);
+          &MainWindow::saveFilesTriggered, fileActionConnection);
   connect(static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab),
           &EditTab::editorStateChanged, saveAction,
           [saveAction](bool enabled) { saveAction->setEnabled(enabled); });
@@ -279,12 +293,13 @@ void MainWindow::setupMenus() {
   auto *saveAsAction = new QAction(saveAsIcon, "Save File As...", this);
   saveAsAction->setShortcut(QKeySequence::SaveAs);
   connect(saveAsAction, &QAction::triggered, this,
-          &MainWindow::saveFilesAsTriggered);
+          &MainWindow::saveFilesAsTriggered, fileActionConnection);
   connect(static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab),
           &EditTab::editorStateChanged, saveAction,
           [saveAsAction](bool enabled) { saveAsAction->setEnabled(enabled); });
   m_ui->menuFile->addAction(saveAsAction);
 
+#ifndef __EMSCRIPTEN__
   // Exit is only provided on desktop; it is meaningless in a browser tab.
   m_ui->menuFile->addSeparator();
   const QIcon exitIcon = QIcon(":/icons/cancel.svg");
@@ -292,6 +307,7 @@ void MainWindow::setupMenus() {
   exitAction->setShortcut(QKeySequence::Quit);
   connect(exitAction, &QAction::triggered, this, &MainWindow::close);
   m_ui->menuFile->addAction(exitAction);
+#endif
 #endif
 
   m_ui->menuView->addAction(
@@ -400,6 +416,26 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::loadFileTriggered() {
   static_cast<ProcessorTab *>(m_tabWidgets.at(ProcessorTabID).tab)->pause();
+#ifdef RIPES_WITH_REMOTE_FS
+  // On WASM, a dialog opened on top of a dialog running exec() blocks the
+  // application, so the load dialog is shown asynchronously.
+  auto *diag = new LoadDialog(this);
+  diag->setAttribute(Qt::WA_DeleteOnClose);
+  connect(diag, &QDialog::accepted, this, [this, diag] {
+    // Copied, so that nothing refers to the dialog while the file is loaded.
+    const LoadFileParams params = diag->getParams();
+    if (static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)
+            ->loadExternalFile(params)) {
+      // Set the current save path to the loaded file. Only store the file
+      // basename without extension.
+      QFileInfo info = QFileInfo(params.filepath);
+      auto savePath = info.dir().path() + QDir::separator() + info.baseName();
+      RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
+      RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
+    }
+  });
+  diag->open();
+#else
   LoadDialog diag;
   if (!diag.exec())
     return;
@@ -413,6 +449,7 @@ void MainWindow::loadFileTriggered() {
     RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
     RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
   }
+#endif
 }
 
 void MainWindow::wiki() {
@@ -474,7 +511,9 @@ void MainWindow::saveFilesTriggered() {
                                "Error when saving file: " + file.errorString());
       return;
     }
+#ifndef RIPES_WITH_REMOTE_FS
     downloadIfWasm(diag.sourcePath(), text.toUtf8());
+#endif
   }
 
   if (!diag.binaryPath().isEmpty()) {
@@ -492,7 +531,9 @@ void MainWindow::saveFilesTriggered() {
                                "Error when saving file: " + file.errorString());
       return;
     }
+#ifndef RIPES_WITH_REMOTE_FS
     downloadIfWasm(diag.binaryPath(), data);
+#endif
   }
 
   GeneralStatusManager::setStatusTimed("Saved files " + savedFiles.join(", "),
@@ -500,6 +541,19 @@ void MainWindow::saveFilesTriggered() {
 }
 
 void MainWindow::saveFilesAsTriggered() {
+#ifdef RIPES_WITH_REMOTE_FS
+  // On WASM, a dialog opened on top of a dialog running exec() blocks the
+  // application, so the save dialog is shown asynchronously.
+  auto *diag = new SaveDialog(
+      static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)->getSourceType(),
+      this);
+  diag->setAttribute(Qt::WA_DeleteOnClose);
+  connect(diag, &QDialog::accepted, this, [this] {
+    RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
+    saveFilesTriggered();
+  });
+  diag->open();
+#else
   SaveDialog diag(
       static_cast<EditTab *>(m_tabWidgets.at(EditTabID).tab)->getSourceType());
   auto ret = diag.exec();
@@ -508,6 +562,7 @@ void MainWindow::saveFilesAsTriggered() {
   }
   RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
   saveFilesTriggered();
+#endif
 }
 
 void MainWindow::settingsTriggered() {

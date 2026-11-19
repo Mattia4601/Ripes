@@ -4,6 +4,13 @@
 #include <QCheckBox>
 #include <QFileDialog>
 
+#ifdef RIPES_WITH_REMOTE_FS
+#include "remotefs/remotefiledialog.h"
+#include "remotefs/remotefileengine.h"
+
+#include <QRegularExpression>
+#endif
+
 namespace Ripes {
 
 SaveDialog::SaveDialog(SourceType sourceType, QWidget *parent)
@@ -25,15 +32,36 @@ SaveDialog::SaveDialog(SourceType sourceType, QWidget *parent)
       RipesSettings::value(RIPES_SETTING_SAVE_SOURCE).toBool());
   m_ui->saveBinary->setChecked(
       RipesSettings::value(RIPES_SETTING_SAVE_BINARY).toBool());
+#ifdef RIPES_WITH_REMOTE_FS
+  // The remote file system only stores source files.
+  m_ui->saveBinary->setChecked(false);
+  m_ui->saveBinary->setEnabled(false);
+#endif
 
   QString path = RipesSettings::value(RIPES_SETTING_SAVEPATH).toString();
+#ifdef RIPES_WITH_REMOTE_FS
+  // Only remote paths are persistent; anything else would be lost on reload.
+  if (!path.startsWith(RemoteFileSystemPrefix) ||
+      !QFileInfo(path).dir().exists()) {
+    path = RemoteFileSystemPrefix + u'/';
+  }
+#else
   if (!QFileInfo(path).dir().exists()) {
     path = QDir::currentPath();
   }
-  if (QFileInfo(path).isDir()) {
+#endif
+#ifdef RIPES_WITH_REMOTE_FS
+  // The remote file system is flat, its root being the only directory. This
+  // is checked on the path itself, since QFileInfo would ask the server.
+  const bool pathIsDir =
+      path == RemoteFileSystemPrefix || path == RemoteFileSystemPrefix + u'/';
+#else
+  const bool pathIsDir = QFileInfo(path).isDir();
+#endif
+  if (pathIsDir) {
     path += QDir::separator();
   }
-#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__) && !defined(RIPES_WITH_REMOTE_FS)
   // Files are saved as browser downloads, so only a file name is needed.
   setWindowTitle("Download files...");
   m_ui->openFile->setVisible(false);
@@ -78,11 +106,35 @@ void SaveDialog::pathChanged() {
 }
 
 void SaveDialog::openFileButtonTriggered() {
+#ifdef RIPES_WITH_REMOTE_FS
+  // Browse the remote file system. Nested exec() calls are not supported on
+  // WASM, so the file dialog is opened asynchronously.
+  auto *dialog = new RemoteFileDialog(
+      RemoteFileDialog::Mode::Save, tr("Save source file"),
+      QStringLiteral("Source files (*.s *.as *.asm *.c)"), this);
+  if (!dialog->refresh()) {
+    // Cancelled or failed: stay on this dialog.
+    dialog->deleteLater();
+    return;
+  }
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &RemoteFileDialog::fileSelected, this,
+          [this](QString filename) {
+            // The save path excludes the extension, which is appended based
+            // on the source type (see sourcePath()).
+            filename.remove(
+                QRegularExpression(QStringLiteral("\\.(s|as|asm|c)$"),
+                                   QRegularExpression::CaseInsensitiveOption));
+            m_ui->filePath->setText(filename);
+          });
+  dialog->open();
+#else
   QFileDialog dialog(this);
   dialog.setAcceptMode(QFileDialog::AcceptSave);
   if (dialog.exec()) {
     m_ui->filePath->setText(dialog.selectedFiles().at(0));
   }
+#endif
 }
 
 SaveDialog::~SaveDialog() { delete m_ui; }
